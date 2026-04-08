@@ -1,7 +1,9 @@
 import torch
+import np
 from torch.distributions import Normal
 
-class Schedule():
+# Instance of a schedule (generally only use one unless trying multiple models)
+class SchedulerAgent():
     def __init__(self, name, types):
         self.name = name
         self.types = types
@@ -14,6 +16,20 @@ class Schedule():
     def complete_assignment(self, assignment):
         self.assignments[assignment.type.label].remove(assignment)
         self.history.append(assignment)
+
+class AssignmentGenerator():
+    def __init__(self, types):
+        self.types = types
+    
+    def generate_assignment(self, name):
+        type = torch.choice(self.types)
+        ret = []
+        for type in self.types:
+            if np.random.rand() < type.rate:
+                due_date = type.true_progress_distribution.sample()
+                value = type.flow_state_distribution.sample()
+                ret.append(Assignment(name, type, due_date, value))
+        return ret
 
 class Assignment():
     def __init__(self, name, type, due_date, value):
@@ -51,6 +67,7 @@ class Type():
         self.label = label
         # number of progress steps
         self.true_progress_distribution = Normal(mean=10, std=2)
+        self.rate = 1.0 / 24.0
         self.flow_state_distribution = Normal(mean=0.5, std=0.1)
         self.drop_off_rate = None
         self.current_flow = None
