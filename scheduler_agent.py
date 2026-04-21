@@ -43,7 +43,7 @@ class Scheduler_Agent():
         return [None] * self.horizon
 
     def receive_task(self, task: Task):
-        self.insert_task(task)
+        self.insert_task_first_possible(task)
 
     def insert_task_first_possible(self, task: Task):
         # insert task into 
@@ -83,14 +83,34 @@ class Scheduler_Agent():
 class environment():
     def __init__(self, types):
         self.types = types
+        self.tasks = {}
     
-    def publish_task(self, task):
-        return task
+    def publish_task(self, type):
+        n_task = Task(type)
+        self.tasks[n_task] = 0
+        return type
     
     def check_tasks(self):
+        rets = []
         for type in self.types:
             if type.sample() < type.valid:
-                self.publish_task()
+                rets.append(self.publish_task(type))
+    
+    def mark_task(self, Task):
+        return self.tasks[Task]
+
+class runner():
+    def __init__(self, types, total_time):
+        env = environment(types)
+        # should include an underlying agent
+        agent = None
+        scheduler = Scheduler_Agent(horizon=24, types=types, agent=agent)
+        for _ in range(total_time):
+            environment.penalize_late(agent)
+            for task in environment.check_tasks():
+                scheduler.receive_task(task)
+            for completed in scheduler.step():
+                environment.mark_task(completed)
 # order of events for each time slot (assume)
 # end of current time chunk
 # Agent completes tasks -> environment
