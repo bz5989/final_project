@@ -1,5 +1,5 @@
 import torch
-import np
+import numpy as np
 from torch.distributions import Normal
 
 # Instance of a schedule (generally only use one unless trying multiple models)
@@ -66,13 +66,13 @@ class Type():
     def __init__(self, label):
         self.label = label
         # number of progress steps
-        self.true_progress_distribution = Normal(mean=10, std=2)
+        self.true_progress_distribution = Normal(10, 2)
         self.rate = 1.0 / 24.0
-        self.flow_state_distribution = Normal(mean=0.5, std=0.1)
-        self.drop_off_rate = None
-        self.current_flow = None
-        self.estimated_time = None
-        self.estimated_progress = None
+        self.flow_state_distribution = Normal(0.5, 0.1)
+        self.drop_off_rate = 0.0
+        self.current_flow = 1.0
+        self.estimated_time = 1.0
+        self.estimated_progress = 1.0
     
     def time_equivalent(self, progress_increment):
         return progress_increment * self.estimated_time / self.estimated_progress
