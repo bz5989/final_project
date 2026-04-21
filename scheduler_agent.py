@@ -45,9 +45,26 @@ class Scheduler_Agent():
     def receive_task(self, task: Task):
         self.insert_task(task)
 
-    def insert_task(self, task: Task):
+    def insert_task_first_possible(self, task: Task):
         # insert task into 
-        print("Insert stuff magically")
+        put_task = False
+        for i in self.horizon:
+            if self.check_free(i, i+task.length):
+                self.put_task(i, i+task.length, task)
+                put_task = True
+                break
+        return put_task
+    
+    def check_free(self, start: int, end: int):
+        for i in range(start, end):
+            if self.schedule_window[i] != None:
+                return False
+        return True
+    
+    def put_task(self, start: int, end: int, task: Task):
+        for i in range(start, end):
+            self.schedule_window[i] = Task
+        return True
     
     def step(self):
         if self.schedule_window[0] != None:
