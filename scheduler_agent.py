@@ -67,16 +67,23 @@ class Scheduler_Agent():
         return True
     
     def step(self):
+        ret = None
         if self.schedule_window[0] != None:
             task = self.schedule_window[0]
             complete = task.progress()
             if complete:
                 self.mark_complete(task)
+                ret = task
         self.shift_window()
+        return ret
     
     def shift_window(self):
-        print("Shift window forward one step")
+        for i in range(self.horizon - 1):
+            self.schedule_window[i] = self.schedule_window[i + 1]
+        self.schedule_window[self.horizon - 1] = None
     
+    def mark_complete(self, task: Task):
+        return task
     def receive_reward(self, reward: int):
         self.agent.receive_reward(reward)
     
@@ -106,11 +113,13 @@ class runner():
         agent = None
         scheduler = Scheduler_Agent(horizon=24, types=types, agent=agent)
         for _ in range(total_time):
-            environment.penalize_late(agent)
-            for task in environment.check_tasks():
+            env.penalize_late(agent)
+            for task in env.check_tasks():
                 scheduler.receive_task(task)
-            for completed in scheduler.step():
-                environment.mark_task(completed)
+            # agent does tasks, marks complete for a task (maybe)
+            completed = scheduler.step()
+            if completed != None:
+                env.mark_task(completed)
 # order of events for each time slot (assume)
 # end of current time chunk
 # Agent completes tasks -> environment
