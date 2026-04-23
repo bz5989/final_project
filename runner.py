@@ -6,7 +6,7 @@ from Simulator import Simulator, summarise
 quick_tasks = TaskCategory(
     name="Quick",
     category_seed=1,
-    mean_time=2,
+    mean_time=1,
     std_time=0.3,
     mean_reward=3.0,
     std_reward=0.5,
@@ -29,7 +29,7 @@ generators = [
 ]
 
 env = Environment(generators=generators, timesteps=1000)
-
+print(env.all_tasks)
 for agent in [RandomAgent(seed=42, horizon=10), GreedyAgent(horizon=10)]:
     sim = Simulator(env=env, agent=agent, horizon=10)
     results = sim.run()
