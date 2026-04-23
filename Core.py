@@ -9,30 +9,29 @@ class TaskInstance:
         self,
         task_category,
         instance_id,
-        start_time,
-        end_time,
+        creation_time,
+        duration_time,
+        deadline_time,
         base_reward,
         penalty_fn
     ):
         self.task_category  = task_category
         self.instance_id    = instance_id
-        self.start_time     = start_time
-        self.end_time       = end_time
+        self.creation_time  = creation_time
+        self.duration_time  = duration_time
+        self.deadline_time  = deadline_time
         self.base_reward    = base_reward
         self.penalty_fn     = penalty_fn
 
     def get_reward(self, current_time):
-        overdue_time = max(0, current_time - self.end_time)
+        overdue_time = max(0, current_time - self.deadline_time)
         return self.base_reward - self.penalty_fn(overdue_time)
-    
-    @property
-    def duration(self): return self.end_time - self.start_time
 
     @property
     def label(self): return self.task_category.name
 
     def __repr__(self):
-        return f"TaskInstance(Category={self.label}, id={self.instance_id}, window=[{self.start_time:.2f},{self.end_time:.2f}], reward={self.base_reward:.2f})"
+        return f"TaskInstance(Category={self.label}, id={self.instance_id}, duration={self.duration_time}, window=[{self.creation_time:.2f},{self.deadline_time:.2f}], reward={self.base_reward:.2f})"
 
 class TaskCategory:
     def __init__(
@@ -41,6 +40,8 @@ class TaskCategory:
         category_seed,
         mean_time,
         std_time,
+        mean_buffer_time,
+        std_buffer_time,
         mean_reward,
         std_reward,
         penalty_fn
@@ -49,6 +50,8 @@ class TaskCategory:
         self.category_seed = category_seed
         self.mean_time = mean_time
         self.std_time = std_time
+        self.mean_buffer_time = mean_buffer_time
+        self.std_buffer_time = std_buffer_time
         self.mean_reward = mean_reward
         self.std_reward = std_reward
         self.penalty_fn = penalty_fn if penalty_fn else linear_penalty
@@ -60,7 +63,7 @@ class TaskCategory:
     
     def create_instance(
             self,
-            start_time,
+            creation_time,
             instance_id
     ):
         if instance_id is None:
@@ -68,13 +71,16 @@ class TaskCategory:
             self._instance_count += 1
         
         rng = self._rng(instance_id)
-        time = max(1.0, rng.normal(self.mean_time, self.std_time))
+        duration_time = max(1.0, rng.normal(self.mean_time, self.std_time))
+        buffer_time = max(0.0, rng.normal(self.mean_buffer_time, self.std_buffer_time))
+        deadline_time = duration_time + buffer_time
         base_reward = max(0.0, rng.normal(self.mean_reward, self.std_reward))
         return TaskInstance(
             task_category=self,
             instance_id=instance_id,
-            start_time=start_time,
-            end_time=start_time+time,
+            creation_time=creation_time,
+            duration_time=duration_time,
+            deadline_time=deadline_time,
             base_reward=base_reward,
             penalty_fn=self.penalty_fn
         )
@@ -109,7 +115,7 @@ class TaskGenerator:
 
     def create_instance(
         self,
-        start_time,
+        creation_time,
         call_id=None
     ):
         if call_id is None:
@@ -119,7 +125,7 @@ class TaskGenerator:
         if rng.uniform() > self.probability: return None
 
         instance = self.task_category.create_instance(
-            start_time=start_time,
+            creation_time=creation_time,
             instance_id=self._instance_count
         )
         self._instance_count += 1

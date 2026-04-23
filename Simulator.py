@@ -24,7 +24,7 @@ class Simulator:
             focus=plan[0]
             if focus: 
                 progress[focus.instance_id] += 1.0
-                if progress[focus.instance_id] >= focus.duration:
+                if progress[focus.instance_id] >= focus.duration_time:
                     reward = focus.get_reward(timestep)
                     results.append((focus, timestep, reward))
                     task_instances_available.remove(focus) 

@@ -29,7 +29,7 @@ class Environment:
         for timestep in range(self.timesteps):
             task_instances = []
             for generator in self.generators:
-                task_instance = generator.create_instance(start_time=timestep)
+                task_instance = generator.create_instance(creation_time=timestep)
                 if task_instance: task_instances.append(task_instance)
             history.append(Timestep(t=timestep, task_instances=task_instances))
         return history
