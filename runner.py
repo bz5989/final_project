@@ -1,29 +1,36 @@
-from classes import SchedulerAgent, AssignmentGenerator, Assignment, Type
-from torch.distributions import Normal
+from Core import TaskCategory, TaskGenerator, linear_penalty, no_penalty
+from Environment import Environment
+from Agents import RandomAgent, GreedyAgent
+from Simulator import Simulator, summarise
 
-if __name__ == "__main__":
-    types = {
-        'pset_short': {
-            'label': 'pset_short',
-            'true_progress_distribution': Normal(5.0, 1.0),
-            'flow_state_distribution': Normal(1.0, 0.3),
-            'drop_off_rate': 0.05,
-            'rate': 1.0 / 24.0,
-        },
-        'pset_long': {
-            'label': 'pset_long',
-            'true_progress_distribution': Normal(15.0, 3.0),
-            'flow_state_distribution': Normal(1.0, 0.1),
-            'drop_off_rate': 0.05,
-            'rate': 1.0 / 24.0 / 3.0,
-        },
-        'project': {
-            'label': 'project',
-            'true_progress_distribution': Normal(100.0, 5.0),
-            'flow_state_distribution': Normal(1.0, 0.1),
-            'drop_off_rate': 0.05,
-            'rate': 1.0 / 24.0 / 21.0,
-        },
-    }
-    generator = AssignmentGenerator(types)
-    schedule = SchedulerAgent('my_schedule', types)
+quick_tasks = TaskCategory(
+    name="Quick",
+    category_seed=1,
+    mean_time=2,
+    std_time=0.3,
+    mean_reward=3.0,
+    std_reward=0.5,
+    penalty_fn=linear_penalty
+)
+
+big_tasks = TaskCategory(
+    name="Big",
+    category_seed=2,
+    mean_time=5,
+    std_time=1.0,
+    mean_reward=10.0,
+    std_reward=1.5,
+    penalty_fn=linear_penalty
+)
+
+generators = [
+    TaskGenerator(quick_tasks, generator_seed=10, probability=0.3),
+    TaskGenerator(big_tasks, generator_seed=11, probability=0.1)
+]
+
+env = Environment(generators=generators, timesteps=1000)
+
+for agent in [RandomAgent(seed=42, horizon=10), GreedyAgent(horizon=10)]:
+    sim = Simulator(env=env, agent=agent, horizon=10)
+    results = sim.run()
+    summarise(agent.name, results, env)
