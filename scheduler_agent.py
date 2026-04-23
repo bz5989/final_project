@@ -84,6 +84,7 @@ class Scheduler_Agent():
     
     def mark_complete(self, task: Task):
         return task
+    
     def receive_reward(self, reward: int):
         self.agent.receive_reward(reward)
     
