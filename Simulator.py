@@ -2,10 +2,11 @@ from Core import TaskInstance
 from Environment import Environment
 
 class Simulator:
-    def __init__(self, env, agent, horizon):
+    def __init__(self, env, agent, horizon, scheduler_agent=False):
         self.env = env
         self.agent = agent
         self.horizon = horizon
+        self.scheduler_agent = scheduler_agent
 
     def run(self):
         self.agent.reset()
