@@ -9,7 +9,8 @@ class PPO_Pointer_Network(nn.Module):
     def __init__(self, H, emb=64, hid=128):
         super().__init__()
         self.H = H
-        self.embedding = nn.Embedding(100, emb)
+        
+        self.embedding = nn.Embedding(H, emb)
         self.encoder = nn.LSTM(emb, hid, batch_first=True)
 
         self.job_encoder = nn.Sequential(
@@ -95,33 +96,31 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
 
     for _ in range(num_steps):
         job = env.sample_job()
-        job_tensor = torch.tensor([job["type"], job["deadline"], job["reward"]]) if job else torch.zeros(3)
+        job_tensor = torch.tensor([job.task_category, job.deadline_time, job.base_reward]) if job else torch.zeros(3)
         pred_dur = model.get_pred_duration(job_tensor)
         pred_length = int(torch.ceil(pred_dur).item())
-        mask = scheduler.valid_mask(pred_length)
-        action, log_prob, value = model.get_action(torch.tensor(schedule),
-                                                            job_tensor, 
-                                                            torch.tensor(mask))
-        
-        
+        mask_tensor = torch.tensor(scheduler.valid_mask(pred_length))
+        action, log_prob, value = model.get_action(torch.tensor(schedule), job_tensor, mask_tensor)
+        # action is equivalent to location where placed
         reward = 0
 
         if job:
-            jid = job["id"]
+            jid = job.instance_id
             if scheduler.can_place(action, pred_length):
-                scheduler.place({"id": jid, "length": pred_length}, action)
+                scheduler.place(jid, pred_length, action)
                 env.add_job(job)
 
                 allocation[jid] = allocation.get(jid, 0) + pred_length
 
                 pred_durations.append(pred_dur)
-                true_lengths.append(torch.tensor(job["length"], dtype=torch.float32))
+                true_lengths.append(torch.tensor(job.duration, dtype=torch.float32))
             else:
-                reward -= 1
+                reward -= 10
 
         finished = scheduler.shift()
         env.step_time()
 
+        # penalize underestimates of jobs
         if finished != 0:
             jid = finished
             if jid in env.jobs:
@@ -139,11 +138,11 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
         rewards.append(reward)
         values.append(value)
         jobs.append(job_tensor)
-        masks.append(torch.tensor(mask))
+        masks.append(mask_tensor)
     
     job = env.sample_job()
-    mask = scheduler.valid_mask(job)
-    _, _, value = model.get_action(torch.tensor(schedule), job, mask)
+    mask_tensor = torch.tensor(scheduler.valid_mask(job))
+    _, _, value = model.get_action(torch.tensor(schedule), job, mask_tensor)
     values.append(value)
 
     advantages = []
@@ -196,7 +195,7 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=3
 
             policy_loss = -torch.mean(torch.min(s1, s2))
             value_loss = nn.mse_loss(values, returns[batch_indices])
-            dur_loss = F.mse_loss(pred_durations, true_lengths)
+            dur_loss = nn.mse_loss(pred_durations, true_lengths)
 
             loss = policy_loss + value_coef * value_loss + dur_coef * dur_loss
 
