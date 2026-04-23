@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from Task_Scheduler import TaskScheduler
-from pseudo_environment import Environment
+from PPOSchedulerAgent import PPOSchedulerAgent
+from Environment import Environment
+from Core import TaskCategory, TaskGenerator, linear_penalty
 
 class PPO_Pointer_Network(nn.Module):
     def __init__(self, H, emb=64, hid=128):
@@ -43,10 +44,8 @@ class PPO_Pointer_Network(nn.Module):
 
         if job is None:
             job_vec = torch.zeros(B, enc.size(-1))
-            pred_duration = torch.ones(B)
         else:
             job_vec = self.job_encoder(job)
-            pred_duration = self.duration_head(job_vec).squeeze(-1)
 
         job_query = self.W_query(job_vec).unsqueeze(1)
         schedule_meaning = self.W_ref(enc)
@@ -58,19 +57,31 @@ class PPO_Pointer_Network(nn.Module):
             logits = logits + (mask - 1) * 1e9
 
         value = self.value_head(enc.mean(dim=1)).squeeze(-1)
-        return logits, value, pred_duration
+        return logits, value
+    
+    def get_pred_duration(self, job):
+        if job is None:
+            return 0
+        job_vec = self.job_encoder(job)
+        pred_duration = self.duration_head(job_vec).squeeze(-1)
+        return pred_duration
+    
+    def get_pred_length(self, job):
+        pred_dur = self.get_pred_duration(job)
+        pred_length = int(torch.ceil(pred_dur).item())
+        return pred_length
 
     @torch.no_grad()
     def get_action(self, schedule, job, mask=None):
-        logits, value, pred_duration = self.forward(schedule, job, mask)
+        logits, value = self.forward(schedule, job, mask)
         dist = torch.distributions.Categorical(logits=logits)
         action = dist.sample()
-        return action, dist.log_prob(action), value, pred_duration
+        return action, dist.log_prob(action), value
 
     def get_log_prob(self, schedule, job, action, mask=None):
-        logits, value, pred_duration = self.forward(schedule, job, mask)
+        logits, value = self.forward(schedule, job, mask)
         dist = torch.distributions.Categorical(logits=logits)
-        return dist.log_prob(action), value, pred_duration
+        return dist.log_prob(action), value
 
 def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
     schedules, actions, log_probs = [], [], []
@@ -84,13 +95,14 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
 
     for _ in range(num_steps):
         job = env.sample_job()
-        mask = scheduler.valid_mask(job)
         job_tensor = torch.tensor([job["type"], job["deadline"], job["reward"]]) if job else torch.zeros(3)
-        action, log_prob, value, pred_dur = model.get_action(torch.tensor(schedule),
+        pred_dur = model.get_pred_duration(job_tensor)
+        pred_length = int(torch.ceil(pred_dur).item())
+        mask = scheduler.valid_mask(pred_length)
+        action, log_prob, value = model.get_action(torch.tensor(schedule),
                                                             job_tensor, 
                                                             torch.tensor(mask))
         
-        pred_length = int(torch.clamp(torch.round(pred_dur), 1, scheduler.H).item())
         
         reward = 0
 
@@ -175,7 +187,7 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=3
     for _ in range(epochs):
         for i in range(0, len(schedules), batch_size):
             batch_indices = idx[i:i + batch_size]
-            new_log_probs, values, pred_duration = model.get_log_prob(schedules[batch_indices], jobs[batch_indices], 
+            new_log_probs, values = model.get_log_prob(schedules[batch_indices], jobs[batch_indices], 
                                            actions[batch_indices], masks[batch_indices])
             
             ratio = torch.exp(new_log_probs - old_logp[batch_indices])
@@ -192,20 +204,46 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=3
             loss.backward()
             optimizer.step()
 
-def train_ppo():
-    H = 8
-    model = PPO_Pointer_Network(H)
-    opt = torch.optim.Adam(model.parameters(), lr=3e-4)
-    scheduler = TaskScheduler(H)
-    env = Environment(H, 1, 2)
-
+def train_ppo(model, optimizer, scheduler, env):
     for ep in range(200):
         batch = collect_batch(env, scheduler, model)
-        ppo_update(model, opt, batch)
+        ppo_update(model, optimizer, batch)
 
         if ep % 20 == 0:
             print("Episode", ep)
 
 
 if __name__ == "__main__":
-    train_ppo()
+    H = 8
+    model = PPO_Pointer_Network(H)
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    scheduler = PPOSchedulerAgent(model, H)
+
+
+    # environment taken from runner.py
+    quick_tasks = TaskCategory(
+        name="Quick",
+        category_seed=1,
+        mean_time=1,
+        std_time=0.3,
+        mean_reward=3.0,
+        std_reward=0.5,
+        penalty_fn=linear_penalty
+    )
+
+    big_tasks = TaskCategory(
+        name="Big",
+        category_seed=2,
+        mean_time=5,
+        std_time=1.0,
+        mean_reward=10.0,
+        std_reward=1.5,
+        penalty_fn=linear_penalty
+    )
+
+    generators = [
+        TaskGenerator(quick_tasks, generator_seed=10, probability=0.3),
+        TaskGenerator(big_tasks, generator_seed=11, probability=0.1)
+    ]
+    env = Environment(generators=generators, timesteps=1000)
+    train_ppo(model, optimizer, scheduler, env)

@@ -5,65 +5,74 @@ class PPOSchedulerAgent:
     def __init__(self, model, horizon):
         self.H = horizon
         self.model = model
-        self.schedule_window = [None] * self.H
-        self.task_map = {}
+        self.schedule_window = [0] * self.H
+        self.task_ids = {}
 
     def plan(self, available_tasks, timestep):
-        scheduled_ids = {t.instance_id for t in self.task_map.values()}
 
         for task in available_tasks:
-            if task.instance_id not in scheduled_ids:
+            if task.instance_id not in self.tasks.keys():
                 self.insert_task(task, timestep)
 
-        focus = self.schedule_window[0]
         self.shift()
-
-        return [focus] if focus else [None]
+        return self.get_schedule_window()
 
     def reset(self):
-        self.schedule_window = [None] * self.H
-        self.task_map = {}
+        self.schedule_window = [0] * self.H
+        self.task_ids = {}
+
+    def get_schedule_window(self):
+        return self.schedule_window
 
     def insert_task(self, task, current_time):
-        job_vec = self.encode_job(task, current_time)
         schedule_tensor = self.encode_schedule()
-        mask = self.valid_mask(task.duration)
+        job_tensor = torch.tensor(self.encode_job(task, current_time))
+        mask_tensor = torch.tensor(self.valid_mask(task.duration))
 
-        action, _, _, _ = self.model.get_action(
-            schedule_tensor, job_vec, mask
-        )
+        pred_length = self.model.get_pred_length(job_tensor)
+        action, _, _ = self.model.get_action(schedule_tensor, job_tensor, mask_tensor)
 
         action_item = action.item()
 
-        # place task
-        for k in range(task.duration):
-            self.schedule_window[action_item + k] = task
+        self.place(task.instance_id, pred_length, action_item)
 
-        self.task_map[task.instance_id] = task
+        self.task_ids[task.instance_id] = task
 
     def encode_job(self, task, current_time):
-        return torch.tensor([
-            task.task_type if hasattr(task, "task_type") else 1,
+        return [task.task_type if hasattr(task, "task_type") else 1,
             float(task.duration),
-            max(0, float(task.deadline - current_time)) if hasattr(task, "deadline") else float(self.H)
-        ], dtype=torch.float32)
+            max(0, float(task.deadline - current_time)) if hasattr(task, "deadline") else float(self.H)]
 
     def encode_schedule(self):
-        ids = [
-            0 if x is None else (x.instance_id % 100)
-            for x in self.schedule_window
-        ]
+        ids = [id % 100 for id in self.schedule_window]
         return torch.tensor(ids, dtype=torch.long)
 
-    def valid_mask(self, length):
+    def valid_mask(self, pred_length):
         mask = []
         for i in range(self.H):
-            if i + length > self.H:
+            if i + pred_length > self.H:
                 mask.append(0)
             else:
-                ok = all(self.schedule_window[i + k] is None for k in range(length))
+                ok = all(self.schedule_window[i + k] == 0 for k in range(pred_length))
                 mask.append(1 if ok else 0)
-        return torch.tensor(mask, dtype=torch.float32)
+        return mask
+
+    def can_place(self, i, pred_length):
+        if i + pred_length > self.H:
+            return False
+        return all(self.schedule_window[i + k] == 0 for k in range(pred_length))
+
+    def place(self, job_id, pred_length, i):
+        for k in range(pred_length):
+            self.schedule_window[i + k] = job_id
 
     def shift(self):
-        self.schedule_window = self.schedule_window[1:] + [None]
+        job = self.schedule_window[0]
+        self.schedule_window = self.schedule_window[1:] + [0]
+        return job
+    
+    def copy(self):
+        s = PPOSchedulerAgent(self.model, self.H)
+        s.schedule_window = self.schedule_window.copy()
+        s.task_ids = self.task_ids.copy()
+        return s
