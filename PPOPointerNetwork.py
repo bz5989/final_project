@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from math import ceil
 from PPOSchedulerAgent import PPOSchedulerAgent
 from Environment import Environment
 from utils import plot_diagnostics
@@ -114,13 +115,14 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
 
             pred_dur = model.get_pred_duration(job_tensor)
             pred_length = int(torch.ceil(pred_dur).item())
+            length = int(ceil(job.duration_time))
 
-            mask_tensor = torch.tensor(scheduler.valid_mask(pred_length))
+            mask_tensor = torch.tensor(scheduler.valid_mask(length))
             action, log_prob = model.get_action(schedule_tensor, job_tensor, mask_tensor)
 
             # action is equivalent to location where placed
-            if scheduler.can_place(action, pred_length):
-                scheduler.place(job, pred_length, action)
+            if scheduler.can_place(action, length):
+                scheduler.place(job, length, action)
             else:
                 reward -= job.base_reward
             
@@ -142,8 +144,8 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
         # reward += env.lateness_reward()
 
         schedules.append(schedule_tensor)
-        actions.append(action.squeeze())
-        log_probs.append(log_prob.squeeze())
+        actions.append(action)
+        log_probs.append(log_prob)
         rewards.append(reward)
         values.append(value)
         jobs.append(job_tensor)
@@ -182,7 +184,7 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
 
     return batch
 
-def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=32, value_coef=0.5, dur_coef=0.1):
+def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=16, value_coef=0.5, dur_coef=0.1):
     schedules = batch["schedules"]
     actions = batch["actions"]
     old_logp = batch["log_probs"]
@@ -217,7 +219,10 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=3
 
             policy_loss = -torch.mean(torch.min(s1, s2))
             value_loss = F.mse_loss(values, returns[batch_indices])
-            dur_loss = F.mse_loss(new_durations, true_lengths[batch_indices])
+
+            mask = valid[batch_indices].float()
+            dur_loss = ((new_durations - true_lengths[batch_indices])**2 * mask).sum() / (mask.sum() + 1e-8)
+            # dur_loss = F.mse_loss(new_durations, true_lengths[batch_indices])
 
             loss = policy_loss + value_coef * value_loss + dur_coef * dur_loss
 
@@ -228,14 +233,19 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=3
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-    return {'policy_loss': policy_losses / epochs / num_batches,
+    return {
+        'policy_loss': policy_losses / epochs / num_batches,
             'value_loss': value_losses / epochs / num_batches,
-            'dur_loss': dur_losses / epochs / num_batches}
+            'dur_loss': dur_losses / epochs / num_batches
+            }
 
 def train_ppo(model, optimizer, scheduler, env):
     # training_rewards = []
-    metrics = {'policy_loss': [], 'value_loss': [], 'dur_loss': []}
-    for ep in range(200):
+    metrics = {'policy_loss': [], 
+               'value_loss': [], 
+               'dur_loss': []
+               }
+    for ep in range(500):
         batch = collect_batch(env, scheduler, model, num_steps=200)
         dict = ppo_update(model, optimizer, batch)
         
@@ -306,7 +316,7 @@ if __name__ == "__main__":
         TaskGenerator(quick_tasks, generator_seed=10, probability=0.3),
         TaskGenerator(big_tasks, generator_seed=11, probability=0.1)
     ]
-    env = Environment(generators=generators, timesteps=40000)
+    env = Environment(generators=generators, timesteps=100000)
     env_wrapper = MicroEnv(env)
     metrics = train_ppo(model, optimizer, scheduler, env_wrapper)
 
