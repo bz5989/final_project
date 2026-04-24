@@ -8,6 +8,7 @@ class TaskInstance:
     def __init__(
         self,
         task_category,
+        task_id,
         instance_id,
         creation_time,
         duration_time,
@@ -16,6 +17,7 @@ class TaskInstance:
         penalty_fn
     ):
         self.task_category  = task_category
+        self.task_id        = task_id
         self.instance_id    = instance_id
         self.creation_time  = creation_time
         self.duration_time  = duration_time
@@ -38,6 +40,7 @@ class TaskCategory:
     def __init__(
         self,
         name,
+        task_id, 
         category_seed,
         mean_time,
         std_time,
@@ -48,6 +51,7 @@ class TaskCategory:
         penalty_fn
     ):
         self.name = name
+        self.task_id = task_id
         self.category_seed = category_seed
         self.mean_time = mean_time
         self.std_time = std_time
@@ -78,6 +82,7 @@ class TaskCategory:
         base_reward = max(0.0, rng.normal(self.mean_reward, self.std_reward))
         return TaskInstance(
             task_category=self,
+            task_id=self.task_id,
             instance_id=instance_id,
             creation_time=creation_time,
             duration_time=duration_time,
