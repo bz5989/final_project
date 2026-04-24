@@ -6,7 +6,7 @@ from Environment import Environment
 from Core import TaskCategory, TaskGenerator, linear_penalty
 
 class PPO_Pointer_Network(nn.Module):
-    def __init__(self, H, emb=64, hid=128):
+    def __init__(self, H, emb=3, hid=128):
         super().__init__()
         self.H = H
         
@@ -95,12 +95,13 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
     env.t = 0
 
     for _ in range(num_steps):
+        schedule_tensor = torch.tensor(scheduler.embed_schedule())
         job = env.sample_job()
         job_tensor = torch.tensor([job.task_category, job.deadline_time, job.base_reward]) if job else torch.zeros(3)
         pred_dur = model.get_pred_duration(job_tensor)
         pred_length = int(torch.ceil(pred_dur).item())
         mask_tensor = torch.tensor(scheduler.valid_mask(pred_length))
-        action, log_prob, value = model.get_action(torch.tensor(schedule), job_tensor, mask_tensor)
+        action, log_prob, value = model.get_action(schedule_tensor, job_tensor, mask_tensor)
         # action is equivalent to location where placed
         reward = 0
 
@@ -108,14 +109,13 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
             jid = job.instance_id
             if scheduler.can_place(action, pred_length):
                 scheduler.place(jid, pred_length, action)
-                env.add_job(job)
 
                 allocation[jid] = allocation.get(jid, 0) + pred_length
 
                 pred_durations.append(pred_dur)
                 true_lengths.append(torch.tensor(job.duration, dtype=torch.float32))
             else:
-                reward -= 10
+                reward -= job.base_reward
 
         finished = scheduler.shift()
         env.step_time()
@@ -132,7 +132,7 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
         reward += env.lateness_reward()
         schedule = scheduler.get_schedule_window()
 
-        schedules.append(torch.tensor(schedule))
+        schedules.append(schedule_tensor)
         actions.append(action)
         log_probs.append(log_prob)
         rewards.append(reward)

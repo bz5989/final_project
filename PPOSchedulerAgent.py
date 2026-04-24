@@ -12,7 +12,7 @@ class PPOSchedulerAgent:
 
         for job in available_jobs:
             if job.instance_id not in self.job_ids.keys():
-                self.insert_task(job, timestep)
+                self.insert_task(job)
         # self.shift()
         schedule = self.get_schedule_window()
         schedule.shift()
@@ -25,10 +25,16 @@ class PPOSchedulerAgent:
     def get_schedule_window(self):
         return self.schedule_window
 
-    def insert_task(self, job, current_time):
+    def embed_schedule(self):
+        schedule_embedding = [[0, 0, 0] if x == 0 else [self.job_ids[x][0].task_category, 
+                                                        self.job_ids[x][0].deadline_time, 
+                                                        self.job_ids[x][0].base_reward] for x in self.schedule_window]
+        return schedule_embedding
+    
+    def insert_task(self, job):
         # change to encode based on types
-        schedule_tensor = torch.tensor(self.schedule_window)
-        job_tensor = torch.tensor(self.encode_job(job, current_time))
+        schedule_tensor = torch.tensor(self.embed_schedule())
+        job_tensor = torch.tensor(self.encode_job(job))
         pred_length = self.model.get_pred_length(job_tensor)
         mask_tensor = torch.tensor(self.valid_mask(pred_length))
 
@@ -38,12 +44,11 @@ class PPOSchedulerAgent:
 
         self.place(job.instance_id, pred_length, action_item)
 
-        self.job_ids[job.instance_id] = job
+        self.job_ids[job.instance_id] = [job, pred_length]
 
-    def encode_job(self, job, current_time):
-        return [job.task_type if hasattr(job, "task_type") else 1,
-            max(0, float(job.deadline - current_time)) if hasattr(job, "deadline") else float(self.H),
-            job.reward if hasattr(job, "reward") else 0]
+    def encode_job(self, job):
+        job_vals = [job.task_category, job.deadline_time, job.base_reward] if job else [0, 0, 0]
+        return job_vals
 
     def valid_mask(self, pred_length):
         mask = []

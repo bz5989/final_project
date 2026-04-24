@@ -25,7 +25,8 @@ class TaskInstance:
 
     def get_reward(self, current_time):
         overdue_time = max(0, current_time - self.deadline_time)
-        return self.base_reward - self.penalty_fn(overdue_time)
+        return max(0, self.base_reward - self.penalty_fn(overdue_time))
+        
 
     @property
     def label(self): return self.task_category.name
