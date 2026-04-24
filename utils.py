@@ -18,6 +18,7 @@ def plot_diagnostics(metrics, title, filename):
         ('policy_loss', 'Policy Loss'),
         ('value_loss', 'Value Loss'),
         ('dur_loss', 'Duration Loss'),
+        ('entropy', 'Entropy')
     ]
 
     for ax, (key, label) in zip(axes.flat, panels):

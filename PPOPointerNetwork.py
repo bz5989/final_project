@@ -184,7 +184,7 @@ def collect_batch(env, scheduler, model, num_steps=100, gamma=0.99, lam=0.95):
 
     return batch
 
-def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=16, value_coef=0.5, dur_coef=0.1):
+def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=16, value_coef=0.5, dur_coef=0.1, entropy_coef=0.01):
     schedules = batch["schedules"]
     actions = batch["actions"]
     old_logp = batch["log_probs"]
@@ -201,6 +201,7 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=1
     policy_losses = 0.0
     value_losses = 0.0
     dur_losses = 0.0
+    entropies = 0.0
 
     num_batches = len(schedules) / batch_size
     for _ in range(epochs):
@@ -210,6 +211,12 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=1
             new_log_probs = model.get_log_prob(schedules[batch_indices], jobs[batch_indices], 
                                            actions[batch_indices], masks[batch_indices])
             
+            dist = torch.distributions.Categorical(logits=model.forward(schedules[batch_indices], 
+                                                                        jobs[batch_indices], 
+                                                                        masks[batch_indices]))
+
+            entropy = dist.entropy().mean()
+
             new_durations = model.get_pred_duration(jobs[batch_indices])
             values = model.get_value(schedules[batch_indices])
 
@@ -224,26 +231,29 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=1
             dur_loss = ((new_durations - true_lengths[batch_indices])**2 * mask).sum() / (mask.sum() + 1e-8)
             # dur_loss = F.mse_loss(new_durations, true_lengths[batch_indices])
 
-            loss = policy_loss + value_coef * value_loss + dur_coef * dur_loss
+            loss = policy_loss + value_coef * value_loss + dur_coef * dur_loss - entropy_coef * entropy
 
             policy_losses += policy_loss.item()
             value_losses += value_loss.item()
             dur_losses += dur_loss.item()
+            entropies += entropy.item()
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
     return {
-        'policy_loss': policy_losses / epochs / num_batches,
+            'policy_loss': policy_losses / epochs / num_batches,
             'value_loss': value_losses / epochs / num_batches,
-            'dur_loss': dur_losses / epochs / num_batches
+            'dur_loss': dur_losses / epochs / num_batches,
+            'entropy': entropies / epochs / num_batches,
             }
 
 def train_ppo(model, optimizer, scheduler, env):
     # training_rewards = []
     metrics = {'policy_loss': [], 
                'value_loss': [], 
-               'dur_loss': []
+               'dur_loss': [],
+               'entropy': [],
                }
     for ep in range(500):
         batch = collect_batch(env, scheduler, model, num_steps=200)
