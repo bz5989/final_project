@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from math import ceil
 from PPOSchedulerAgent import PPOSchedulerAgent
 from Environment import Environment
-from utils import plot_diagnostics
+from utils import plot_diagnostics, plot_general
 from Core import TaskCategory, TaskGenerator, linear_penalty
 
 class PPO_Pointer_Network(nn.Module):
@@ -288,6 +288,35 @@ class MicroEnv:
     def step_time(self):
         self.time += 1
 
+def evaluate_policy(env, model, scheduler, num_episodes=20, steps=100):
+    rewards = []
+    for ep in range(num_episodes):
+        total_reward = 0.0
+        scheduler.reset()
+        for _ in range(steps):
+            schedule_tensor = torch.tensor(scheduler.embed_schedule(), dtype=torch.float32)
+            id, job = env.sample_job()
+            if job:
+                job_tensor = torch.tensor([job.task_id, job.deadline_time - scheduler.t])
+                pred_dur = model.get_pred_duration(job_tensor)
+                pred_length = int(torch.ceil(pred_dur).item())
+                mask_tensor = torch.tensor(scheduler.valid_mask(pred_length))
+                action, _ = model.get_action(schedule_tensor, job_tensor, mask_tensor)
+
+                # action is equivalent to location where placed
+                if scheduler.can_place(action, pred_length):
+                    scheduler.place(job, pred_length, action)
+                else:
+                    reward -= job.base_reward
+            worked_job = scheduler.shift()
+            env.step_time()
+
+            # penalize underestimates of jobs
+            if worked_job != -1:
+                reward += scheduler.check_reward(worked_job)
+        rewards.append(total_reward)
+    return rewards
+
 if __name__ == "__main__":
     H = 8
     model = PPO_Pointer_Network(H)
@@ -330,4 +359,11 @@ if __name__ == "__main__":
     env_wrapper = MicroEnv(env)
     metrics = train_ppo(model, optimizer, scheduler, env_wrapper)
 
-    plot_diagnostics(metrics, "Test", "diagnostics.png")
+    time_steps = 2000
+    test_env = Environment(generators = generators, timesteps=time_steps)
+    test_env_wrapper = MicroEnv(test_env)
+    eval_rewards = evaluate_policy(test_env_wrapper, model, scheduler)
+
+    plot_general(eval_rewards, "Rewards on evaluation", "evaluation.png")
+
+    # plot_diagnostics(metrics, "Test", "diagnostics.png")

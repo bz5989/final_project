@@ -32,3 +32,17 @@ def plot_diagnostics(metrics, title, filename):
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close()
+
+def plot_general(rewards, title, filename):
+    fig, axes = plt.subplots(1, 1, figsize=(12, 8))
+
+    for ax in axes:
+        ax.plot(rewards, linewidth=1.5, color="steelblue")
+        ax.set_title(f"{title}", fontsize=11)
+        ax.set_xlabel("Iteration", fontsize=10)
+        ax.set_ylabel("Reward", fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    plt.close()
