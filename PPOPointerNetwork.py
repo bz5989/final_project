@@ -4,9 +4,7 @@ import torch.nn.functional as F
 from math import ceil
 from PPOSchedulerAgent import PPOSchedulerAgent
 from Environment import Environment
-from utils import plot_diagnostics, plot_general
 from Core import TaskCategory, TaskGenerator, linear_penalty
-import argparse
 from tqdm import tqdm
 import numpy as np
 
