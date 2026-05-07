@@ -6,6 +6,9 @@ from PPOSchedulerAgent import PPOSchedulerAgent
 from Environment import Environment
 from utils import plot_diagnostics, plot_general
 from Core import TaskCategory, TaskGenerator, linear_penalty
+import argparse
+from tqdm import tqdm
+import numpy as np
 
 class PPO_Pointer_Network(nn.Module):
     def __init__(self, H, emb=3, hid=128):
@@ -248,22 +251,23 @@ def ppo_update(model, optimizer, batch, clip_epsilon=0.2, epochs=4, batch_size=1
             'entropy': entropies / epochs / num_batches,
             }
 
-def train_ppo(model, optimizer, scheduler, env):
+def train_ppo(model, optimizer, scheduler, env, episodes=500, batch_steps=200, eval_rate=20):
     # training_rewards = []
     metrics = {'policy_loss': [], 
                'value_loss': [], 
                'dur_loss': [],
                'entropy': [],
+               'eval_rewards': [],
                }
-    for ep in range(500):
-        batch = collect_batch(env, scheduler, model, num_steps=200)
+    for ep in tqdm(range(episodes)):
+        batch = collect_batch(env, scheduler, model, num_steps=batch_steps)
         dict = ppo_update(model, optimizer, batch)
         
-        for key in metrics:
+        for key in dict:
             metrics[key].append(dict[key])
 
-        if ep % 20 == 0:
-            print("Episode", ep)
+        if ep % eval_rate == 0:
+            metrics['eval_rewards'].append(evaluate_policy(env, model, scheduler))
 
     return metrics
 
@@ -288,7 +292,7 @@ class MicroEnv:
     def step_time(self):
         self.time += 1
 
-def evaluate_policy(env, model, scheduler, num_episodes=20, steps=100):
+def evaluate_policy(env, model, scheduler, num_episodes=5, steps=200):
     rewards = []
     for ep in range(num_episodes):
         total_reward = 0.0
@@ -307,23 +311,17 @@ def evaluate_policy(env, model, scheduler, num_episodes=20, steps=100):
                 if scheduler.can_place(action, pred_length):
                     scheduler.place(job, pred_length, action)
                 else:
-                    reward -= job.base_reward
+                    total_reward -= job.base_reward
             worked_job = scheduler.shift()
             env.step_time()
 
             # penalize underestimates of jobs
             if worked_job != -1:
-                reward += scheduler.check_reward(worked_job)
+                total_reward += scheduler.check_reward(worked_job)
         rewards.append(total_reward)
     return rewards
 
-if __name__ == "__main__":
-    H = 8
-    model = PPO_Pointer_Network(H)
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
-    scheduler = PPOSchedulerAgent(model, H)
-
-
+def load_generators():
     # environment taken from runner.py
     quick_tasks = TaskCategory(
         name="Quick",
@@ -355,15 +353,30 @@ if __name__ == "__main__":
         TaskGenerator(quick_tasks, generator_seed=10, probability=0.3),
         TaskGenerator(big_tasks, generator_seed=11, probability=0.1)
     ]
-    env = Environment(generators=generators, timesteps=100000)
+    return generators
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("PPO Pointer Network")
+    parser.add_argument("save_file", help="Name for saving model as", type=str)
+    args = parser.parse_args()
+    save_file = args.save_file + '.pth'
+    
+    H = 8
+    model = PPO_Pointer_Network(H)
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    scheduler = PPOSchedulerAgent(model, H)
+    generators = load_generators()
+
+    env = Environment(generators=generators, timesteps=1300000)
     env_wrapper = MicroEnv(env)
-    metrics = train_ppo(model, optimizer, scheduler, env_wrapper)
+    metrics = train_ppo(model, optimizer, scheduler, env_wrapper, episodes=5000, eval_rate=100)
+        
+    np.savez(save_file, 
+            policy_loss_train=metrics['policy_loss'], value_loss_train=metrics['value_loss'],
+            duration_loss_train=metrics['dur_loss'], entropy=metrics['entropy'], eval_rewards=metrics['eval_rewards'])
 
-    time_steps = 2000
-    test_env = Environment(generators = generators, timesteps=time_steps)
-    test_env_wrapper = MicroEnv(test_env)
-    eval_rewards = evaluate_policy(test_env_wrapper, model, scheduler)
+    # plot_general(eval_rewards, "Rewards on evaluation", "evaluation.png")
 
-    plot_general(eval_rewards, "Rewards on evaluation", "evaluation.png")
+    torch.save(model.state_dict(), save_file)
 
     # plot_diagnostics(metrics, "Test", "diagnostics.png")
