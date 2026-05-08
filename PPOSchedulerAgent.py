@@ -1,4 +1,6 @@
 import torch
+from utils import Log
+
 
 class PPOSchedulerAgent:
     name="Scheduler"
@@ -8,6 +10,7 @@ class PPOSchedulerAgent:
         self.schedule_window = [-1] * self.H
         self.job_ids = {}
         self.t = 0
+        self.logger = Log()
 
     def plan(self, available_jobs, timestep):
 

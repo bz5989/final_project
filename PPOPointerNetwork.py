@@ -7,6 +7,8 @@ from Environment import Environment
 from Core import TaskCategory, TaskGenerator, linear_penalty
 from tqdm import tqdm
 import numpy as np
+from utils import plot_general, plot_diagnostics
+import argparse
 
 class PPO_Pointer_Network(nn.Module):
     def __init__(self, H, emb=3, hid=128):
@@ -265,7 +267,20 @@ def train_ppo(model, optimizer, scheduler, env, episodes=500, batch_steps=200, e
             metrics[key].append(dict[key])
 
         if ep % eval_rate == 0:
-            metrics['eval_rewards'].append(evaluate_policy(env, model, scheduler))
+            eval_index = ep // eval_rate
+
+            visualize_eval = (eval_index % 5 == 0)
+
+            metrics['eval_rewards'].append(
+                evaluate_policy(
+                    env,
+                    model,
+                    scheduler,
+                    visualize=visualize_eval,
+                    visual_prefix=f"eval_{eval_index}",
+                    snapshot_every=10
+                )
+            )
 
     return metrics
 
@@ -290,14 +305,30 @@ class MicroEnv:
     def step_time(self):
         self.time += 1
 
-def evaluate_policy(env, model, scheduler, num_episodes=5, steps=200):
+def evaluate_policy(env, model, scheduler, num_episodes=5, steps=200, visualize = False, visual_prefix = "eval_visual", snapshot_every = 10):
     rewards = []
+
+    if visualize:
+        scheduler.logger.logs = []
     for ep in range(num_episodes):
         total_reward = 0.0
         scheduler.reset()
         for _ in range(steps):
+            snap = visualize and ep == 0 and (scheduler.t % snapshot_every == 0)
             schedule_tensor = torch.tensor(scheduler.embed_schedule(), dtype=torch.float32)
             id, job = env.sample_job()
+
+            if snap and ep == 0:
+                scheduler.logger.logsched_step(
+                    t=scheduler.t,
+                    job_id=-1,
+                    task_type=-1,
+                    position=-1,
+                    pred_length=-1,
+                    inserted=False,
+                    schedule=scheduler.schedule_window.copy(),
+                    event_type="before_insert"
+                )
             if job:
                 job_tensor = torch.tensor([job.task_id, job.deadline_time - scheduler.t])
                 pred_dur = model.get_pred_duration(job_tensor)
@@ -308,6 +339,17 @@ def evaluate_policy(env, model, scheduler, num_episodes=5, steps=200):
                 # action is equivalent to location where placed
                 if scheduler.can_place(action, pred_length):
                     scheduler.place(job, pred_length, action)
+                    if snap:
+                        scheduler.logger.logsched_step(
+                            t=scheduler.t,
+                            job_id=job.instance_id,
+                            task_type=job.task_id,
+                            position=action.item(),
+                            pred_length=pred_length,
+                            inserted=True,
+                            schedule=scheduler.schedule_window.copy(),
+                            event_type="after_insert"
+                        )
                 else:
                     total_reward -= job.base_reward
             worked_job = scheduler.shift()
@@ -317,6 +359,16 @@ def evaluate_policy(env, model, scheduler, num_episodes=5, steps=200):
             if worked_job != -1:
                 total_reward += scheduler.check_reward(worked_job)
         rewards.append(total_reward)
+
+    if visualize:
+        scheduler.logger.save_logs_to_file(
+            f"{visual_prefix}_schedule_logs.txt"
+        )
+
+        scheduler.logger.plot_pairs(
+            f"{visual_prefix}_insert_pairs.png"
+        )
+
     return rewards
 
 def load_generators():
@@ -373,8 +425,8 @@ if __name__ == "__main__":
             policy_loss_train=metrics['policy_loss'], value_loss_train=metrics['value_loss'],
             duration_loss_train=metrics['dur_loss'], entropy=metrics['entropy'], eval_rewards=metrics['eval_rewards'])
 
-    # plot_general(eval_rewards, "Rewards on evaluation", "evaluation.png")
+    plot_general(metrics['eval_rewards'], "Rewards on evaluation", "evaluation.png")
 
     torch.save(model.state_dict(), save_file)
 
-    # plot_diagnostics(metrics, "Test", "diagnostics.png")
+    plot_diagnostics(metrics, "Test", "diagnostics.png")
